@@ -76,29 +76,39 @@ def browseForFile(msg):
     Returns path to chosen file.
     '''
     currdir = os.getcwd()
-    tempdir = filedialog.askopenfile(initialdir=currdir, title=msg)
+    tempdir = filedialog.askopenfile(initialdir=currdir, title=msg, filetypes = (('Array Config Files','*.cfg'),('all files','*.*')))
     return tempdir
+
+def readConfigFile():
+    file = browseForFile('Select Config File')
+    if file.name[-3:] == 'cfg': # first validation
+        lines = file.readlines()
+        valid = [line for line in lines if line[0]!='#']
+        ins = [line.strip() for line in valid if line.strip()[-3:] == 'wav']
+        filters = [line.strip() for line in valid if line.strip()[-3:] == 'mat']
+        assert len(ins) == len(filters)    # should be one to one mapping
+        return ins, filters
 ##### <<<<<<<<< VARIABLES >>>>>>>>> #####
 
 audio_gainL = 0     # Initial Gain
 audio_gainR = 0
 fs = 48000
-output_index = selectDeviceIndex() # get input from user
-output_channels = 2
-
-
-frame_size = 2048
-no_conv_streams = 108
+output_index = selectDeviceIndex() # get output card from user
+ins,filters = readConfigFile()
 
 ##### <<<<<<<<< LOAD AUDIO DATA >>>>>>>>> #####
 
 # Main Audio Track
-wf1 = wave.open("WAV/IEEEMale-sentence.wav", 'rb')
-wf2 = wave.open("WAV/lobby-sentence.wav", 'rb')
+wf1 = wave.open(ins[0], 'rb')
+wf2 = wave.open(ins[1], 'rb')
 
 # Load IR Data
-l_contents = sio.loadmat('FILTERS/l1_bin.mat')
-r_contents = sio.loadmat('FILTERS/r1_bin.mat')
+l_contents = sio.loadmat(filters[0])
+r_contents = sio.loadmat(filters[1])
+
+output_channels = 2
+frame_size = 2048
+no_conv_streams = output_channels*2  # two input audio streams
 
 
 # Calculate FFT of IRs to Increase Performance in Callback Loop
