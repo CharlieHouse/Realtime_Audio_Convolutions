@@ -66,8 +66,8 @@ wf1 = wave.open("WAV/IEEEMale-sentence.wav", 'rb')
 wf2 = wave.open("WAV/lobby-sentence.wav", 'rb')
 
 # Load IR Data
-l_contents = sio.loadmat('FILTERS/l1_LP.mat')
-r_contents = sio.loadmat('FILTERS/r1_HP.mat')
+l_contents = sio.loadmat('FILTERS/l1_bin.mat')
+r_contents = sio.loadmat('FILTERS/r1_bin.mat')
 
 
 # Calculate FFT of IRs to Increase Performance in Callback Loop
@@ -186,9 +186,9 @@ stream.stop_stream()
 playback_app = App(title="Playback App")
 play_button = PushButton(playback_app,command=push_play,text="Start Playback")
 play_button = PushButton(playback_app,command=push_stop,text="Stop Playback")
-annotation = Text(playback_app,text="Adjust Left Volume",size=20)
+annotation = Text(playback_app,text="Adjust Input 1 Volume",size=20)
 slider_gainL = Slider(playback_app,command=change_gainL)
-annotation = Text(playback_app,text="Adjust Right Volume",size=20)
+annotation = Text(playback_app,text="Adjust Input 2 Volume",size=20)
 slider_gainR = Slider(playback_app,command=change_gainR)
 
 
