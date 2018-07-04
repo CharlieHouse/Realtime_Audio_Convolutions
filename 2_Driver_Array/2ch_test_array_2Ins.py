@@ -35,24 +35,55 @@ attempts to index outside the bounds of the matrix. This is easily fixed,
 but I haven't got around to it yet.
 
 """
-
-import sys
-sys.path.append('../') # adds in guizero path
-
 ##### IMPORTS #####
-from guizero import App,PushButton,Slider,Text,CheckBox
+import sys
+import os
 import numpy as np
 import pyaudio
 import wave
 import scipy.io as sio
 import scipy.signal as sig
-import pdb
 
+sys.path.append('../') # adds in guizero path
+from guizero import App,PushButton,Slider,Text,CheckBox
+from tkinter import filedialog
+
+# Audio device selection
+def selectDeviceIndex():
+    '''Prints a list of audio devices to the screen and requests user input'''
+    p = pyaudio.PyAudio()                   # initialise PyAudio
+    n_devices = p.get_device_count()        # get number of devices exposed
+    for dev in range(n_devices):            # receive info from each device
+        info = p.get_device_info_by_index(dev)
+        name = info['name']
+        outCh = info['maxOutputChannels']
+        print('{}: {} with {} output channels'.format(dev, name, outCh))
+    print('')
+    go = True
+    while go:                               # Catch loop for input
+        try:                                # Try validation to catch bad types
+            selection = int(input('Select device: '))
+            if selection < n_devices and selection >=0 : # catch invalid nos
+                go = False
+            else:
+                print('Choose Again')
+        except ValueError :
+            print('Choose Again')
+    return selection
+
+def browseForFile(msg):
+    '''Opens a file browser window with title message 'msg' as argument
+    Returns path to chosen file.
+    '''
+    currdir = os.getcwd()
+    tempdir = filedialog.askopenfile(initialdir=currdir, title=msg)
+    return tempdir
 ##### <<<<<<<<< VARIABLES >>>>>>>>> #####
 
-audio_gain = 0     # Initial Gain
+audio_gainL = 0     # Initial Gain
+audio_gainR = 0
 fs = 48000
-output_index = 1    # Dante Virtual Soundcard output index
+output_index = selectDeviceIndex() # get input from user
 output_channels = 2
 
 
@@ -91,8 +122,7 @@ def playingCallback(in_data, frame_count, time_info, status):
     data_bytes1 = wf1.readframes(frame_count)
     data_bytes2 = wf2.readframes(frame_count)
 
-    if len(data_bytes1) == 0:
-        stream.stop_stream
+    if len(data_bytes1) == 0 or len(data_bytes2) == 0:  # loop at end of wav
         wf1.rewind()
         wf2.rewind()
 
@@ -104,7 +134,7 @@ def playingCallback(in_data, frame_count, time_info, status):
     tempFrameLeft = np.frombuffer(data_bytes1,dtype=np.int16) # Convert Bytes to Numpy Array
     tempFrameRight =  np.frombuffer(data_bytes2,dtype=np.int16)
 
-    # slot in
+    # push data into audio frame
     audio_frame_left[:len(tempFrameLeft)] = tempFrameLeft
     audio_frame_right[:len(tempFrameRight)] = tempFrameRight
 
@@ -150,11 +180,9 @@ def ch_realtime_convolution(x,H,ind): # x1 is signal, h is IR, ind is an index v
     return y
 
 
-
 # GUI FUNCTIONS
 def push_play():
     stream.start_stream()
-
 
 def push_stop():
     stream.stop_stream()
@@ -167,6 +195,7 @@ def change_gainL():
 def change_gainR():
     global audio_gainR
     audio_gainR = slider_gainR.value/100
+
 
 
 ##### <<<<<<<<< SETUP AUDIO STREAM >>>>>>>>> #####
@@ -191,5 +220,6 @@ slider_gainL = Slider(playback_app,command=change_gainL)
 annotation = Text(playback_app,text="Adjust Input 2 Volume",size=20)
 slider_gainR = Slider(playback_app,command=change_gainR)
 
-
 playback_app.display()
+# after window closed, close the stream to free up audio device
+stream.close()
