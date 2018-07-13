@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+
 """
 ________________________________________________
 Dan Wallace (dw-ngcm)
@@ -29,26 +31,19 @@ GUIZero (a wrapper for TKInter) is used to generate a GUI for the end-user,
 which enables the user to easily adjust the master output level (which defaults
  to 0) and to enable or disable the output stream.
 
-NOTE: the final frame of the audio hasn't been zero padded to fill out the
-frame, so this script may throw an error when it reaches the final frame and
-attempts to index outside the bounds of the matrix. This is easily fixed,
-but I haven't got around to it yet.
-
 """
 ##### IMPORTS #####
 import sys
-import os
 import numpy as np
 import pyaudio
 import wave
 import scipy.io as sio
 import scipy.signal as sig
 
-sys.path.append('../') # adds in guizero path
+sys.path.append('../')  # adds in guizero path
 from guizero import App,PushButton,Slider,Text,CheckBox
-from tkinter import filedialog
 
-# Audio device selection
+
 def selectDeviceIndex():
     '''Prints a list of audio devices to the screen and requests user input'''
     p = pyaudio.PyAudio()                   # initialise PyAudio
@@ -71,78 +66,35 @@ def selectDeviceIndex():
             print('Choose Again')
     return selection
 
-def graphicBrowseForFile(msg):
-    '''Opens a file browser window with title message 'msg' as argument
-    Returns path to chosen file.
-    WARNING
-    At the moment, this breaks the buttons in the gui
-    '''
-    raise(Warning,'This will break the buttons in the gui')
-    currdir = os.getcwd()
-    tempdir = filedialog.askopenfile(initialdir=currdir, title=msg, filetypes = (('Array Config Files','*.cfg'),('all files','*.*')))
-    return tempdir
-
-def browseForFile(msg):
-    print(msg)
-
-
 
 def readConfigFile():
-    file = browseForFile('Select Config File')
-    if file.name[-3:] == 'cfg': # first validation
-        lines = file.readlines()
+    '''Reads the command-line argument specified config file'''
+    try:
+        with open(sys.argv[1]) as cfg:
+            lines = cfg.readlines()
         valid = [line for line in lines if line[0]!='#']
         ins = [line.strip() for line in valid if line.strip()[-3:] == 'wav']
         filters = [line.strip() for line in valid if line.strip()[-3:] == 'mat']
         assert len(ins) == len(filters)    # should be one to one mapping
         return ins, filters
+    except IndexError:
+        print('Error - No config file specified')
+        print('')
+        print('Usage: ./2ch.py <config>.cfg')
+        exit()
 
-
-##### <<<<<<<<< VARIABLES >>>>>>>>> #####
-
-audio_gainL = 0     # Initial Gain
-audio_gainR = 0
-fs = 48000
-output_index = selectDeviceIndex() # get output card from user
-ins,filters = readConfigFile()
-
-##### <<<<<<<<< LOAD AUDIO DATA >>>>>>>>> #####
-
-# Main Audio Track
-wf1 = wave.open(ins[0], 'rb')
-wf2 = wave.open(ins[1], 'rb')
-
-# Load IR Data
-l_contents = sio.loadmat(filters[0])
-r_contents = sio.loadmat(filters[1])
-
-output_channels = 2
-frame_size = 2048
-no_conv_streams = output_channels*2  # two input audio streams
-
-
-# Calculate FFT of IRs to Increase Performance in Callback Loop
-L = 2048 + frame_size - 1 # linear convolution length
-N = 1<<(L-1).bit_length()   # Get next power of 2 greater than L
-
-fft_irs = np.array(np.zeros((2,output_channels,N),'complex'))
-for i in range(1,output_channels+1):
-    fft_irs[0,i-1,:] = np.fft.fft(np.squeeze(l_contents['L1_{}'.format(str(i).zfill(2))]),N)  # Load Dict of IRs into a Numpy Array
-    fft_irs[1,i-1,:] = np.fft.fft(np.squeeze(r_contents['R1_{}'.format(str(i).zfill(2))]),N)  # Load Dict of IRs into a Numpy Array
-
-
-# Set Initial Convolution Overlaps to 0
-conv_overlap = np.zeros((frame_size,no_conv_streams))
-
-
-##### <<<<<<<<< FUNCTION DEFS >>>>>>>>> #####
 
 # MAIN CALLBACK FUNCTION
 def playingCallback(in_data, frame_count, time_info, status):
+    '''Callback function executed by pyaudio as it streams
+    reads sequential frames of audio from the input wav files,
+    applies convolution with fft_irs
+    then assembles output
+    '''
     data_bytes1 = wf1.readframes(frame_count)
     data_bytes2 = wf2.readframes(frame_count)
 
-    if len(data_bytes1) == 0 or len(data_bytes2) == 0:  # loop at end of wav
+    if len(data_bytes1) == 0 or len(data_bytes2) == 0:  # loop at end of either wav
         wf1.rewind()
         wf2.rewind()
 
@@ -181,7 +133,16 @@ def playingCallback(in_data, frame_count, time_info, status):
 
 
 # DSP FUNCTIONS
-def ch_realtime_convolution(x,H,ind): # x1 is signal, h is IR, ind is an index value corresponding to which set of overlap data should be used (which conv stream this is)
+def ch_realtime_convolution(x,H,ind):
+    ''' Overlap-save convolution on a block
+        INPUTS:
+            x - input signal block,
+            h - IRss
+            ind - index value corresponding to which set of overlap data should
+                  be used (which conv stream this is)
+        RETURNS:
+            y - convolved output block
+    '''
     global N
 
     X = np.fft.fft( x, N ) # Fourier transform of audio (zero pad to N freq bins)
@@ -198,6 +159,29 @@ def ch_realtime_convolution(x,H,ind): # x1 is signal, h is IR, ind is an index v
     y = y[0:frame_size]
 
     return y
+
+def channelIDCallback(in_data, frame_count, time_info, status):
+    '''Tests that channels are connected as expected
+
+    creates gaussian noise pulses in order of channel count
+
+    '''
+    lPulse = 10
+    lGap = 1
+    lT = lPulse+lGap
+    pulse = np.concatenate((np.random.rand(int(fs*lPulse)), np.zeros(int(fs*lGap))), 0)
+    outputAudio = np.zeros([int(lT*fs*output_channels), output_channels])
+    for i in range(output_channels):
+        outputAudio[int(i*fs*lT):int((i+1)*fs*lT), i] = pulse
+
+    # Interleave Outputs
+    output = np.vstack(outputAudio).reshape((-1,), order='C')
+
+    out_data = output.astype(np.int16)
+    out_data = out_data.tobytes()
+
+    return out_data, pyaudio.paContinue
+
 
 
 # GUI FUNCTIONS
@@ -217,6 +201,50 @@ def change_gainR():
     audio_gainR = slider_gainR.value/100
 
 
+##### <<<<<<<<< VARIABLES >>>>>>>>> #####
+
+audio_gainL = 0     # Initial Gain
+audio_gainR = 0
+fs = 48000
+ins,filters = readConfigFile()
+output_index = selectDeviceIndex() # get output card from user
+##### <<<<<<<<< LOAD AUDIO DATA >>>>>>>>> #####
+
+
+# Main Audio Track
+wf1 = wave.open(ins[0], 'rb')
+wf2 = wave.open(ins[1], 'rb')
+
+# Load IR Data
+l_contents = sio.loadmat(filters[0])
+r_contents = sio.loadmat(filters[1])
+
+output_channels = 2
+frame_size = 2048
+no_conv_streams = output_channels*2  # 2 is for the two input audio streams
+
+# Calculate FFT of IRs to Increase Performance in Callback Loop
+L = 2048 + frame_size - 1 # linear convolution length
+N = 1<<(L-1).bit_length()   # Get next power of 2 greater than L
+
+fft_irs = np.array(np.zeros((2,output_channels,N),'complex'))
+for i in range(1,output_channels+1):
+    fft_irs[0,i-1,:] = np.fft.fft(np.squeeze(l_contents['L1_{}'.format(str(i).zfill(2))]),N)  # Load Dict of IRs into a Numpy Array
+    fft_irs[1,i-1,:] = np.fft.fft(np.squeeze(r_contents['R1_{}'.format(str(i).zfill(2))]),N)  # Load Dict of IRs into a Numpy Array
+
+# Set Initial Convolution Overlaps to 0
+conv_overlap = np.zeros((frame_size,no_conv_streams))
+
+
+#p = pyaudio.PyAudio()
+#
+#stream = p.open(format = pyaudio.paInt16,
+#                channels = output_channels,
+#                rate = fs,
+#                output = True,
+#                stream_callback=channelIDCallback,
+#                output_device_index=output_index,
+#                frames_per_buffer=frame_size)
 
 ##### <<<<<<<<< SETUP AUDIO STREAM >>>>>>>>> #####
 p = pyaudio.PyAudio()
